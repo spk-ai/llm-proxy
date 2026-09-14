@@ -92,7 +92,8 @@ func (f *NativeForwarder) Forward(w http.ResponseWriter, r *http.Request, bindin
 	}
 
 	if stream {
-		usage, err := streamToClient(r.Context(), w, resp.Body, binding.Protocol)
+		observe := nativeStreamErrorObserver(meta, upstream, resp, binding.Protocol)
+		usage, err := streamToClientObserved(r.Context(), w, resp.Body, binding.Protocol, observe)
 		if err != nil {
 			log.Printf("native: stream response failed: %v", err)
 			f.record(meta, nil, meteringStatusFailed)

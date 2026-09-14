@@ -611,6 +611,10 @@ func closeResponseBody(body io.Closer) {
 }
 
 func streamToClient(ctx context.Context, w http.ResponseWriter, body io.Reader, protocol llmv1.Protocol) (*usageCounts, error) {
+	return streamToClientObserved(ctx, w, body, protocol, nil)
+}
+
+func streamToClientObserved(ctx context.Context, w http.ResponseWriter, body io.Reader, protocol llmv1.Protocol, observe func(eventType, data string, complete bool)) (*usageCounts, error) {
 	flusher, ok := w.(http.Flusher)
 	if !ok {
 		return nil, errors.New("streaming unsupported")
@@ -620,12 +624,15 @@ func streamToClient(ctx context.Context, w http.ResponseWriter, body io.Reader, 
 	var eventType string
 	var dataLines []string
 
-	processEvent := func() {
+	processEvent := func(complete bool) {
 		if len(dataLines) == 0 {
 			eventType = ""
 			return
 		}
 		data := strings.Join(dataLines, "\n")
+		if observe != nil {
+			observe(eventType, data, complete)
+		}
 		parsed, matched, err := parseUsageFromEvent(protocol, eventType, data)
 		if err != nil {
 			log.Printf("proxy: metering usage parse failed: %v", err)
@@ -649,7 +656,7 @@ func streamToClient(ctx context.Context, w http.ResponseWriter, body io.Reader, 
 
 			trimmed := strings.TrimRight(line, "\r\n")
 			if trimmed == "" {
-				processEvent()
+				processEvent(true)
 			} else if strings.HasPrefix(trimmed, "event:") {
 				eventType = strings.TrimSpace(strings.TrimPrefix(trimmed, "event:"))
 			} else if strings.HasPrefix(trimmed, "data:") {
@@ -658,7 +665,7 @@ func streamToClient(ctx context.Context, w http.ResponseWriter, body io.Reader, 
 		}
 		if err != nil {
 			if errors.Is(err, io.EOF) {
-				processEvent()
+				processEvent(false)
 				return usage, nil
 			}
 			return usage, err
