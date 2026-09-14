@@ -19,8 +19,9 @@ import (
 // vendor owns the model namespace, so nothing in it is rewritten -- and parsed
 // only to read the model name for the allowlist and for metering.
 type NativeForwarder struct {
-	client   *http.Client
-	metering MeteringRecorder
+	client             *http.Client
+	metering           MeteringRecorder
+	requestDiagnostics bool
 }
 
 func NewNativeForwarder(client *http.Client, metering MeteringRecorder) *NativeForwarder {
@@ -31,6 +32,14 @@ func NewNativeForwarder(client *http.Client, metering MeteringRecorder) *NativeF
 		panic("metering client is required")
 	}
 	return &NativeForwarder{client: client, metering: metering}
+}
+
+// NewDiagnosticNativeForwarder opts into bounded request metadata logging.
+// It does not log request/response bodies, credentials or raw URLs.
+func NewDiagnosticNativeForwarder(client *http.Client, metering MeteringRecorder) *NativeForwarder {
+	f := NewNativeForwarder(client, metering)
+	f.requestDiagnostics = true
+	return f
 }
 
 func (f *NativeForwarder) Forward(w http.ResponseWriter, r *http.Request, binding native.Binding) {
@@ -68,13 +77,22 @@ func (f *NativeForwarder) Forward(w http.ResponseWriter, r *http.Request, bindin
 		vendor:    nativeVendorLabel(binding.Vendor),
 	}
 
+	if f.requestDiagnostics {
+		logNativeRequest(meta, upstream, nil, stream, "start")
+	}
 	resp, err := f.client.Do(upstream)
 	if err != nil {
+		if f.requestDiagnostics {
+			logNativeRequest(meta, upstream, nil, stream, "transport_error")
+		}
 		f.record(meta, nil, meteringStatusFailed)
 		writeNativeError(w, binding.Vendor, http.StatusBadGateway, fmt.Sprintf("send request: %v", err))
 		return
 	}
 	defer closeResponseBody(resp.Body)
+	if f.requestDiagnostics {
+		logNativeRequest(meta, upstream, resp, stream, "response")
+	}
 
 	// Vendor errors -- expired credential, rate limit, quota -- pass through
 	// unchanged, including headers, so the CLI's own handling works.
