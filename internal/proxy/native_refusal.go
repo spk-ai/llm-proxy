@@ -43,6 +43,12 @@ type nativeRefusalRecord struct {
 	AuthReason         string `json:"auth_reason,omitempty"`
 }
 
+type nativeErrorDetails struct {
+	Type    string `json:"type"`
+	Code    string `json:"code"`
+	Message string `json:"message"`
+}
+
 func describeNativeRefusal(meta meteringMetadata, request *http.Request, response *http.Response, capture *nativeErrorCapture, complete bool) nativeRefusalRecord {
 	record := nativeRefusalRecord{
 		Status:            response.StatusCode,
@@ -89,11 +95,7 @@ func describeNativeRefusal(meta meteringMetadata, request *http.Request, respons
 	}
 
 	var payload struct {
-		Error struct {
-			Type    string `json:"type"`
-			Code    string `json:"code"`
-			Message string `json:"message"`
-		} `json:"error"`
+		Error nativeErrorDetails `json:"error"`
 	}
 	if err := json.Unmarshal(capture.body[:capture.size], &payload); err != nil {
 		record.BodyState = "invalid_json"
@@ -107,14 +109,20 @@ func describeNativeRefusal(meta meteringMetadata, request *http.Request, respons
 		record.ErrorType = payload.Error.Type
 	}
 	if authRefusal {
-		switch {
-		case strings.EqualFold(strings.TrimSpace(payload.Error.Message), "Invalid bearer token"):
-			record.AuthReason = "invalid_bearer_token"
-		case payload.Error.Code == "invalid_api_key":
-			record.AuthReason = "invalid_api_key"
-		}
+		record.AuthReason = nativeAuthReason(payload.Error)
 	}
 	return record
+}
+
+func nativeAuthReason(detail nativeErrorDetails) string {
+	switch {
+	case strings.EqualFold(strings.TrimSpace(detail.Message), "Invalid bearer token"):
+		return "invalid_bearer_token"
+	case detail.Code == "invalid_api_key":
+		return "invalid_api_key"
+	default:
+		return "unknown"
+	}
 }
 
 func diagnosticUUID(value string) string {
