@@ -32,21 +32,37 @@ func TestStreamToClientRelaysDecodedSSE(t *testing.T) {
 	}
 }
 
-// Same relay, gzipped input: nothing usable reaches the client and usage is
-// lost. This is the failure the Accept-Encoding strip prevents.
-func TestStreamToClientCannotRelayGzip(t *testing.T) {
-	var gzipped strings.Builder
-	gz := gzip.NewWriter(&gzipped)
-	_, _ = gz.Write([]byte(sseBody))
-	_ = gz.Close()
-
-	rec := httptest.NewRecorder()
-	usage, _ := streamToClient(context.Background(), rec, strings.NewReader(gzipped.String()), llmv1.Protocol_PROTOCOL_RESPONSES)
-	if usage != nil {
-		t.Fatal("usage parsed from gzip; test no longer reproduces the failure")
-	}
-	if strings.Contains(rec.Body.String(), "response.completed") {
-		t.Fatal("gzip relayed as readable SSE; test no longer reproduces the failure")
+// The relay does not decode gzip. Stored DEFLATE blocks can contain readable
+// substrings, so assert the wire bytes rather than the compressor's choices.
+func TestStreamToClientDoesNotDecodeGzip(t *testing.T) {
+	for name, level := range map[string]int{"default": gzip.DefaultCompression, "stored": gzip.NoCompression} {
+		t.Run(name, func(t *testing.T) {
+			var gzipped strings.Builder
+			gz, err := gzip.NewWriterLevel(&gzipped, level)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := gz.Write([]byte(sseBody)); err != nil {
+				t.Fatal(err)
+			}
+			if err := gz.Close(); err != nil {
+				t.Fatal(err)
+			}
+			rec := httptest.NewRecorder()
+			usage, err := streamToClient(context.Background(), rec, strings.NewReader(gzipped.String()), llmv1.Protocol_PROTOCOL_RESPONSES)
+			if err != nil {
+				t.Fatalf("relay: %v", err)
+			}
+			if usage != nil {
+				t.Fatal("usage unexpectedly parsed from an encoded stream")
+			}
+			if rec.Body.String() != gzipped.String() {
+				t.Fatal("relay changed the encoded wire bytes")
+			}
+			if rec.Body.String() == sseBody {
+				t.Fatal("encoded input unexpectedly became a decoded stream")
+			}
+		})
 	}
 }
 
