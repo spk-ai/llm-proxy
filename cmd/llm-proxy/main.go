@@ -142,12 +142,16 @@ func run() error {
 					_ = previousNative.Close()
 				}
 
+				forwarder := proxy.NewNativeForwarder(&http.Client{}, meteringClient)
+				if cfg.NativeRequestDiagnostics {
+					forwarder = proxy.NewDiagnosticNativeForwarder(&http.Client{}, meteringClient)
+				}
 				nativeServer = native.NewServer(
 					vendorListener,
 					zitiMgmtClient,
 					llmClient,
 					native.NewLeafCertificateCache(nativeCA, leafCertificateTTL, leafCertificateCacheSize, native.SystemClock()),
-					proxy.NewNativeForwarder(&http.Client{}, meteringClient),
+					forwarder,
 				)
 				go func(server *native.Server) {
 					if err := server.Serve(ctx); err != nil && ctx.Err() == nil {

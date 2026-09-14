@@ -39,6 +39,18 @@ See [E2E Testing](https://github.com/agynio/architecture/blob/main/architecture/
 
 ## Native Refusal Diagnostics
 
+Set `NATIVE_REQUEST_DIAGNOSTICS=true` temporarily to emit `native: request metadata`
+records immediately before forwarding and after receiving upstream headers (or
+a transport failure). It defaults off. Records contain a generated call UUID,
+validated binding UUIDs, fixed endpoint/method/content-type categories, a stream
+flag, credential presence and actual HTTP status. They never include raw URLs,
+queries, headers, tokens, models, body keys or body values. Status zero means no
+upstream response was observed, not a successful response. This diagnostic does
+not cover requests rejected before forwarding, traffic bypassing the proxy,
+redirect intermediates, TLS/identity failures or body completion. It does not
+change forwarding, retry, metering or agent outcome semantics. Enabled log volume
+scales with requests; disable after investigation and apply operator retention.
+
 Native-mode non-2xx responses produce one `native: upstream refused` JSON log
 record, correlated with metering by `call_id` (the request usage record's
 idempotency key is `<call_id>-request`). It contains HTTP status, validated UUID

@@ -39,12 +39,17 @@ type Config struct {
 	EgressCACertPath            string
 	EgressCAKeyPath             string
 	ZitiEnabled                 bool
+	NativeRequestDiagnostics    bool
 	ZitiLeaseRenewalInterval    time.Duration
 	ZitiEnrollmentTimeout       time.Duration
 }
 
 func LoadConfigFromEnv() (*Config, error) {
 	zitiEnabled, err := envBool("ZITI_ENABLED")
+	if err != nil {
+		return nil, err
+	}
+	nativeRequestDiagnostics, err := envBool("NATIVE_REQUEST_DIAGNOSTICS")
 	if err != nil {
 		return nil, err
 	}
@@ -77,6 +82,7 @@ func LoadConfigFromEnv() (*Config, error) {
 		EgressCACertPath:            envOrDefault("EGRESS_CA_CERT_PATH", defaultEgressCACertPath),
 		EgressCAKeyPath:             envOrDefault("EGRESS_CA_KEY_PATH", defaultEgressCAKeyPath),
 		ZitiEnabled:                 zitiEnabled,
+		NativeRequestDiagnostics:    nativeRequestDiagnostics,
 		ZitiLeaseRenewalInterval:    zitiLeaseRenewalInterval,
 		ZitiEnrollmentTimeout:       zitiEnrollmentTimeout,
 	}, nil
