@@ -82,7 +82,11 @@ func (f *NativeForwarder) Forward(w http.ResponseWriter, r *http.Request, bindin
 	w.WriteHeader(resp.StatusCode)
 
 	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
-		_, _ = io.Copy(w, resp.Body)
+		capture := &nativeErrorCapture{}
+		_, relayErr := io.Copy(w, io.TeeReader(resp.Body, capture))
+		diagnostic := describeNativeRefusal(meta, upstream, resp, capture, relayErr == nil)
+		encoded, _ := json.Marshal(diagnostic)
+		log.Printf("native: upstream refused %s", encoded)
 		f.record(meta, nil, meteringStatusFailed)
 		return
 	}
