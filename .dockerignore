@@ -9,3 +9,5 @@ tmp
 .idea
 .env
 **/*.swp
+.gen
+.devspace

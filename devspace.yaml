@@ -1,7 +1,7 @@
 version: v2beta1
 
 vars:
-  LLM_PROXY_NAMESPACE: platform
+  LLM_PROXY_NAMESPACE: agyn-platform
 
 functions:
   patch_deployment: |-
@@ -54,16 +54,8 @@ functions:
                     # crashloops, and the sync never gets a window.
                     [ "$elapsed" -ge 900 ] && { echo "ERROR: sync timeout" >&2; exit 1; }
                   done
-                  buf generate buf.build/agynio/api \
-                    --path agynio/api/agents/v1 \
-                    --path agynio/api/llm/v1 \
-                    --path agynio/api/users/v1 \
-                    --path agynio/api/organizations/v1 \
-                    --path agynio/api/authorization/v1 \
-                    --path agynio/api/metering/v1 \
-                    --path agynio/api/ziti_management/v1 \
-                    --path agynio/api/identity/v1 \
-                    --path agynio/api/notifications/v1
+                  # The pinned API revision in buf.gen.yaml, as CI and the image build use.
+                  buf generate --include-imports
                   exec go run ./cmd/llm-proxy
               volumeMounts:
                 - name: data
@@ -256,6 +248,21 @@ pipelines:
         start_dev --disable-pod-replace llm-proxy
       else
         start_dev --disable-pod-replace llm-proxy
+        # The container compiles after the sync lands; leave only once it serves.
+        echo "Waiting for llm-proxy to serve on :8080..."
+        healthy=false
+        for i in $(seq 1 300); do
+          if exec_container --label-selector=app.kubernetes.io/name=llm-proxy -n ${LLM_PROXY_NAMESPACE} -- bash -c 'nc -z localhost 8080 >/dev/null 2>&1 || (echo > /dev/tcp/localhost/8080) >/dev/null 2>&1'; then
+            healthy=true
+            break
+          fi
+          sleep 2
+        done
+        if [ "$healthy" != "true" ]; then
+          echo "ERROR: llm-proxy did not serve within 600s" >&2
+          exit 1
+        fi
+        echo "Dev environment ready. Stopping dev session."
         stop_dev llm-proxy
       fi
   test-e2e:
@@ -304,5 +311,3 @@ dev:
         logs:
           enabled: true
           lastLines: 200
-    ports:
-      - port: "8080"

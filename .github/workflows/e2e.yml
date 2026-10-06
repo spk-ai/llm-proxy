@@ -5,46 +5,52 @@ on:
     branches:
       - main
   pull_request:
+  workflow_dispatch:
 
 permissions:
   contents: read
   packages: read
 
+concurrency:
+  group: e2e-${{ github.event_name == 'pull_request' && github.event.pull_request.number || github.sha }}
+  cancel-in-progress: true
+
 jobs:
   e2e:
     runs-on: ubuntu-latest
     timeout-minutes: 60
+    env:
+      GOTOOLCHAIN: local
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
+      # The harness is pinned to one agynio/e2e commit, and the platform stays
+      # at the charts the VM image ships: moving it to the newest published
+      # charts fails in their MinIO post-upgrade hook, whose image no longer
+      # pulls, before any service from this repository is deployed.
       - name: Provision cluster
-        uses: agynio/e2e/.github/actions/provision-vm@main
+        uses: agynio/e2e/.github/actions/provision-vm@435b549a937129b6858e7314648eb690894209fe # main 2026-09-17
+        with:
+          upgrade: "false"
 
       - name: Setup DevSpace
-        uses: agynio/e2e/.github/actions/setup-devspace@main
+        uses: agynio/e2e/.github/actions/setup-devspace@435b549a937129b6858e7314648eb690894209fe # main 2026-09-17
 
-      - name: Checkout E2E repository
-        uses: actions/checkout@v4
-        with:
-          repository: agynio/e2e
-          ref: main
-          path: e2e
+      # Replaces the platform's llm-proxy with this checkout and returns once
+      # it serves. The harness's own run-tests action then runs the suites in
+      # cluster; the repository's ci-e2e pipeline expects the retired
+      # Terraform bootstrap stacks for its model and gateway lookups.
+      - name: Deploy llm-proxy from source
+        run: devspace dev
 
-      - name: Run llm-proxy E2E
-        run: devspace run ci-e2e
+      - name: Run E2E tests
+        uses: agynio/e2e/.github/actions/run-tests@435b549a937129b6858e7314648eb690894209fe # main 2026-09-17
         env:
           E2E_SUITES: go-core
-          E2E_TAGS: svc_agents_orchestrator svc_llm_proxy
-          E2E_GO_TEST_RUN: "^(TestLLMProxyGatewayCreatedModel|TestFullPipelineAgnMessageResponse)$"
-
-      - name: Upload E2E artifacts
-        if: always()
-        uses: actions/upload-artifact@v4
+          E2E_GO_TEST_RUN: ^(TestLLMProxyGatewayCreatedModel|TestFullPipelineAgnMessageResponse)$
         with:
-          name: e2e-artifacts-llm-proxy
-          path: |
-            e2e/.artifacts/
-            e2e/.diagnostics/
-          include-hidden-files: true
-          if-no-files-found: warn
+          service: llm_proxy
+          tag: svc_agents_orchestrator
+          include_smoke: false
+          e2e-ref: 435b549a937129b6858e7314648eb690894209fe
