@@ -3,6 +3,7 @@ package proxy
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -19,27 +20,37 @@ import (
 // vendor owns the model namespace, so nothing in it is rewritten -- and parsed
 // only to read the model name for the allowlist and for metering.
 type NativeForwarder struct {
-	client   *http.Client
-	metering MeteringRecorder
+	client             *http.Client
+	metering           MeteringRecorder
+	maxRequestBodySize int64
 }
 
-func NewNativeForwarder(client *http.Client, metering MeteringRecorder) *NativeForwarder {
+func NewNativeForwarder(client *http.Client, metering MeteringRecorder, opts ...Option) *NativeForwarder {
 	if client == nil {
 		panic("http client is required")
 	}
 	if metering == nil {
 		panic("metering client is required")
 	}
-	return &NativeForwarder{client: client, metering: metering}
+	resolved := applyOptions(opts)
+	return &NativeForwarder{client: client, metering: metering, maxRequestBodySize: resolved.maxRequestBodySize}
 }
 
 func (f *NativeForwarder) Forward(w http.ResponseWriter, r *http.Request, binding native.Binding) {
-	body, err := io.ReadAll(io.LimitReader(r.Body, maxRequestBodySize))
+	// Forwarded byte-for-byte, so it is read whole or not at all: a body cut at
+	// the limit reaches the vendor as invalid JSON, not as a size error.
+	body, err := readRequestBody(r.Body, r.ContentLength, f.maxRequestBodySize)
+	_ = r.Body.Close()
 	if err != nil {
+		var tooLarge *requestTooLargeError
+		if errors.As(err, &tooLarge) {
+			log.Printf("native: refused vendor=%s path=%s: %v", nativeVendorLabel(binding.Vendor), r.URL.Path, err)
+			writeNativeErrorOfType(w, binding.Vendor, http.StatusRequestEntityTooLarge, "request_too_large", tooLarge.Error())
+			return
+		}
 		writeNativeError(w, binding.Vendor, http.StatusBadRequest, "failed to read request body")
 		return
 	}
-	_ = r.Body.Close()
 
 	// Read-only: the model name drives the allowlist and the metering label,
 	// and a body that is not JSON is still forwarded as the vendor's to judge.
@@ -70,11 +81,13 @@ func (f *NativeForwarder) Forward(w http.ResponseWriter, r *http.Request, bindin
 
 	resp, err := f.client.Do(upstream)
 	if err != nil {
+		log.Printf("native: send failed vendor=%s model=%s request_bytes=%d: %v", meta.vendor, modelName, len(body), err)
 		f.record(meta, nil, meteringStatusFailed)
 		writeNativeError(w, binding.Vendor, http.StatusBadGateway, fmt.Sprintf("send request: %v", err))
 		return
 	}
 	defer closeResponseBody(resp.Body)
+	log.Printf("native: forwarded vendor=%s model=%s request_bytes=%d status=%d", meta.vendor, modelName, len(body), resp.StatusCode)
 
 	// Vendor errors -- expired credential, rate limit, quota -- pass through
 	// unchanged, including headers, so the CLI's own handling works.
@@ -187,11 +200,17 @@ func nativeVendorLabel(vendor llmv1.Vendor) string {
 }
 
 func writeNativeError(w http.ResponseWriter, vendor llmv1.Vendor, status int, message string) {
+	writeNativeErrorOfType(w, vendor, status, "permission_error", message)
+}
+
+// writeNativeErrorOfType refuses in the vendor's error format with the given
+// error type, such as Anthropic's request_too_large for a 413.
+func writeNativeErrorOfType(w http.ResponseWriter, vendor llmv1.Vendor, status int, errorType, message string) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 	body := map[string]any{
 		"type":  "error",
-		"error": map[string]any{"type": "permission_error", "message": "agyn: " + message},
+		"error": map[string]any{"type": errorType, "message": "agyn: " + message},
 	}
 	if vendor != llmv1.Vendor_VENDOR_ANTHROPIC {
 		delete(body, "type")

@@ -864,9 +864,15 @@ func TestHandlerProviderErrorForwardingStream(t *testing.T) {
 }
 
 func TestHandlerBodyTooLarge(t *testing.T) {
-	handler := NewHandler(&fakeLLMClient{}, &fakeAuthzClient{}, &fakeMeteringClient{}, &fakeSandboxResolver{}, http.DefaultClient)
+	const limit = 64 << 10
+	providerCalled := false
+	provider := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		providerCalled = true
+	}))
+	defer provider.Close()
+	handler := platformHandler(t, provider, WithMaxRequestBodySize(limit))
 
-	oversize := strings.Repeat("a", int(maxRequestBodySize)+1)
+	oversize := strings.Repeat("a", limit+1)
 	req := httptest.NewRequest(http.MethodPost, "http://example.com/v1/responses", strings.NewReader(oversize))
 	ctx := identity.WithIdentity(req.Context(), identity.ResolvedIdentity{IdentityID: "user-1", IdentityType: identity.IdentityTypeUser})
 	req = req.WithContext(ctx)
@@ -874,10 +880,13 @@ func TestHandlerBodyTooLarge(t *testing.T) {
 
 	handler.ServeHTTP(resp, req)
 
-	if resp.Code != http.StatusBadRequest {
-		t.Fatalf("expected status %d, got %d", http.StatusBadRequest, resp.Code)
+	if resp.Code != http.StatusRequestEntityTooLarge {
+		t.Fatalf("expected status %d, got %d", http.StatusRequestEntityTooLarge, resp.Code)
 	}
-	if strings.TrimSpace(resp.Body.String()) != "failed to read body" {
-		t.Fatalf("expected read body error, got %q", resp.Body.String())
+	if strings.TrimSpace(resp.Body.String()) != "request body exceeds the 65536-byte limit" {
+		t.Fatalf("expected the limit named, got %q", resp.Body.String())
+	}
+	if providerCalled {
+		t.Fatal("expected no provider call")
 	}
 }

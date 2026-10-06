@@ -25,6 +25,8 @@ const (
 	defaultEgressCAKeyPath       = "/var/run/agyn/egress-ca/tls.key"
 	defaultZitiLeaseInterval     = 2 * time.Minute
 	defaultZitiEnrollmentTimeout = 5 * time.Minute
+	// Anthropic's Messages API accepts requests up to 32 MB.
+	defaultMaxRequestBodyBytes int64 = 32 << 20
 )
 
 type Config struct {
@@ -41,6 +43,9 @@ type Config struct {
 	ZitiEnabled                 bool
 	ZitiLeaseRenewalInterval    time.Duration
 	ZitiEnrollmentTimeout       time.Duration
+	// MaxRequestBodyBytes is the largest model request accepted, on both the
+	// platform and the native path. A larger one is refused with 413.
+	MaxRequestBodyBytes int64
 }
 
 func LoadConfigFromEnv() (*Config, error) {
@@ -65,6 +70,14 @@ func LoadConfigFromEnv() (*Config, error) {
 		return nil, fmt.Errorf("ZITI_ENROLLMENT_TIMEOUT must be positive")
 	}
 
+	maxRequestBodyBytes, err := envInt64("MAX_REQUEST_BODY_BYTES", defaultMaxRequestBodyBytes)
+	if err != nil {
+		return nil, err
+	}
+	if maxRequestBodyBytes <= 0 {
+		return nil, fmt.Errorf("MAX_REQUEST_BODY_BYTES must be positive")
+	}
+
 	return &Config{
 		ListenAddress:               envOrDefault("LISTEN_ADDRESS", defaultListenAddress),
 		LLMServiceAddress:           envOrDefault("LLM_SERVICE_ADDRESS", defaultLLMServiceAddress),
@@ -79,6 +92,7 @@ func LoadConfigFromEnv() (*Config, error) {
 		ZitiEnabled:                 zitiEnabled,
 		ZitiLeaseRenewalInterval:    zitiLeaseRenewalInterval,
 		ZitiEnrollmentTimeout:       zitiEnrollmentTimeout,
+		MaxRequestBodyBytes:         maxRequestBodyBytes,
 	}, nil
 }
 
@@ -112,6 +126,20 @@ func envDuration(name string, fallback time.Duration) (time.Duration, error) {
 	parsed, err := time.ParseDuration(value)
 	if err != nil {
 		return 0, fmt.Errorf("%s must be a valid duration: %w", name, err)
+	}
+
+	return parsed, nil
+}
+
+func envInt64(name string, fallback int64) (int64, error) {
+	value := strings.TrimSpace(os.Getenv(name))
+	if value == "" {
+		return fallback, nil
+	}
+
+	parsed, err := strconv.ParseInt(value, 10, 64)
+	if err != nil {
+		return 0, fmt.Errorf("%s must be an integer number of bytes: %w", name, err)
 	}
 
 	return parsed, nil
