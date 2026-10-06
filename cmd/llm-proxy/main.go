@@ -90,7 +90,9 @@ func run() error {
 		zitiResolver = zitiMgmtClient
 	}
 
-	proxyHandler := proxy.NewHandler(llmClient, authzClient, meteringClient, agentsClient, &http.Client{})
+	log.Printf("llm-proxy: request bodies are limited to %d bytes", cfg.MaxRequestBodyBytes)
+	bodyLimit := proxy.WithMaxRequestBodySize(cfg.MaxRequestBodyBytes)
+	proxyHandler := proxy.NewHandler(llmClient, authzClient, meteringClient, agentsClient, &http.Client{}, bodyLimit)
 	handler := auth.Middleware(zitiResolver, apiTokenResolver)(proxyHandler)
 
 	connContext := func(ctx context.Context, conn net.Conn) context.Context {
@@ -147,7 +149,7 @@ func run() error {
 					zitiMgmtClient,
 					llmClient,
 					native.NewLeafCertificateCache(nativeCA, leafCertificateTTL, leafCertificateCacheSize, native.SystemClock()),
-					proxy.NewNativeForwarder(&http.Client{}, meteringClient),
+					proxy.NewNativeForwarder(&http.Client{}, meteringClient, bodyLimit),
 				)
 				go func(server *native.Server) {
 					if err := server.Serve(ctx); err != nil && ctx.Err() == nil {

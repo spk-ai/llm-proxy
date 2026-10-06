@@ -31,9 +31,8 @@ var (
 )
 
 const (
-	maxRequestBodySize int64 = 1 << 20
-	responsesPath            = "/v1/responses"
-	messagesPath             = "/v1/messages"
+	responsesPath = "/v1/responses"
+	messagesPath  = "/v1/messages"
 )
 
 type ModelResolver interface {
@@ -45,14 +44,15 @@ type AuthorizationChecker interface {
 }
 
 type Handler struct {
-	llmClient       ModelResolver
-	authzClient     AuthorizationChecker
-	meteringClient  MeteringRecorder
-	sandboxResolver SandboxResolver
-	client          *http.Client
+	llmClient          ModelResolver
+	authzClient        AuthorizationChecker
+	meteringClient     MeteringRecorder
+	sandboxResolver    SandboxResolver
+	client             *http.Client
+	maxRequestBodySize int64
 }
 
-func NewHandler(llmClient ModelResolver, authzClient AuthorizationChecker, meteringClient MeteringRecorder, sandboxResolver SandboxResolver, client *http.Client) http.Handler {
+func NewHandler(llmClient ModelResolver, authzClient AuthorizationChecker, meteringClient MeteringRecorder, sandboxResolver SandboxResolver, client *http.Client, opts ...Option) http.Handler {
 	if llmClient == nil {
 		panic("llm client is required")
 	}
@@ -68,7 +68,15 @@ func NewHandler(llmClient ModelResolver, authzClient AuthorizationChecker, meter
 	if client == nil {
 		panic("http client is required")
 	}
-	return &Handler{llmClient: llmClient, authzClient: authzClient, meteringClient: meteringClient, sandboxResolver: sandboxResolver, client: client}
+	resolved := applyOptions(opts)
+	return &Handler{
+		llmClient:          llmClient,
+		authzClient:        authzClient,
+		meteringClient:     meteringClient,
+		sandboxResolver:    sandboxResolver,
+		client:             client,
+		maxRequestBodySize: resolved.maxRequestBodySize,
+	}
 }
 
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -96,9 +104,15 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	r.Body = http.MaxBytesReader(w, r.Body, maxRequestBodySize)
+	r.Body = http.MaxBytesReader(w, r.Body, h.maxRequestBodySize)
 	body, err := io.ReadAll(r.Body)
 	if err != nil {
+		var tooLarge *http.MaxBytesError
+		if errors.As(err, &tooLarge) {
+			log.Printf("proxy: refused method=%s path=%s: request body exceeds the %d-byte limit", r.Method, r.URL.Path, tooLarge.Limit)
+			http.Error(w, fmt.Sprintf("request body exceeds the %d-byte limit", tooLarge.Limit), http.StatusRequestEntityTooLarge)
+			return
+		}
 		http.Error(w, "failed to read body", http.StatusBadRequest)
 		return
 	}
