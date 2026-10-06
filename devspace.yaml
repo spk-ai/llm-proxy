@@ -54,16 +54,8 @@ functions:
                     # crashloops, and the sync never gets a window.
                     [ "$elapsed" -ge 900 ] && { echo "ERROR: sync timeout" >&2; exit 1; }
                   done
-                  buf generate buf.build/agynio/api \
-                    --path agynio/api/agents/v1 \
-                    --path agynio/api/llm/v1 \
-                    --path agynio/api/users/v1 \
-                    --path agynio/api/organizations/v1 \
-                    --path agynio/api/authorization/v1 \
-                    --path agynio/api/metering/v1 \
-                    --path agynio/api/ziti_management/v1 \
-                    --path agynio/api/identity/v1 \
-                    --path agynio/api/notifications/v1
+                  # The pinned API revision in buf.gen.yaml, as CI and the image build use.
+                  buf generate --include-imports
                   exec go run ./cmd/llm-proxy
               volumeMounts:
                 - name: data

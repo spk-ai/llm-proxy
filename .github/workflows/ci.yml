@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - main
+      - docs/living-contracts
   pull_request:
 
 permissions:
@@ -12,6 +13,8 @@ permissions:
 jobs:
   build:
     runs-on: ubuntu-latest
+    env:
+      GOTOOLCHAIN: local
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -19,7 +22,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version: '1.25'
+          go-version: '1.25.x'
 
       - name: Setup Buf
         uses: bufbuild/buf-setup-action@v1
@@ -27,18 +30,9 @@ jobs:
           github_token: ${{ secrets.GITHUB_TOKEN }}
           version: 1.66.0
 
+      # The same pinned API revision the image build generates from.
       - name: Generate protobuf stubs
-        run: |
-          buf generate buf.build/agynio/api \
-            --path agynio/api/llm/v1 \
-            --path agynio/api/users/v1 \
-            --path agynio/api/organizations/v1 \
-            --path agynio/api/authorization/v1 \
-            --path agynio/api/metering/v1 \
-            --path agynio/api/ziti_management/v1 \
-            --path agynio/api/identity/v1 \
-    --path agynio/api/notifications/v1 \
-            --path agynio/api/agents/v1
+        run: buf generate --include-imports
 
       - name: Go vet
         run: go vet ./...
