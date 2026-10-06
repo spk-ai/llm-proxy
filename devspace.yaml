@@ -1,7 +1,7 @@
 version: v2beta1
 
 vars:
-  LLM_PROXY_NAMESPACE: platform
+  LLM_PROXY_NAMESPACE: agyn-platform
 
 functions:
   patch_deployment: |-
@@ -296,5 +296,3 @@ dev:
         logs:
           enabled: true
           lastLines: 200
-    ports:
-      - port: "8080"
